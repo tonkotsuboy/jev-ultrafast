@@ -4,6 +4,48 @@
 
 **A browser agent with a dynamic, indexed action space.**
 
+---
+
+## 🇯🇵 このリポジトリについて（日本語）
+
+これは [browser-use/jev-ultrafast](https://github.com/browser-use/jev-ultrafast) の**フォーク**です。
+オリジナルは browser-use の Gregor Žunič 氏によるデモ実装で、[TypeSafe](https://docs.typesafe.ai/introduction) の `Jev` モデルを使って
+ブラウザを高速に操作します。本家は Google Flights での検索デモに特化しているため、
+**日本語UI**と**任意のURLで実行できる機能**を追加しました。
+
+紹介ツイート → [@tonkotsuboy_com](https://x.com/tonkotsuboy_com/status/2100861211000951110)
+
+### 本家との違い
+
+| 変更点 | 内容 |
+| --- | --- |
+| **任意のURLで実行** | 画面上部の「開始URL」欄に任意のサイトを入力できます。本家は Google Flights と固定ページの3択のみ |
+| **UIの日本語化** | インスペクタ画面の文言を日本語にしました。ライブラリ層のエラーは英語のままです |
+| **空回りの検知** | 操作が一度も実行されないまま判断だけが15回続いたら停止し、理由を表示します。詰まった実行が**50秒→14秒**で止まります |
+| **指示の追加** | 止まった位置から、ブラウザを開き直さずに指示を追加できます。過去の依頼は消えず積み上がります。`DONE`/`BLOCKED` からの復帰も可能 |
+| **開始＝自動実行** | 「デモを開始」で最後まで自動実行します。1手ずつ確認したい場合は「1手ずつ開始」を使います |
+
+### ⚠️ 既知の問題（重要）
+
+**成功すれば非常に高速ですが、失敗する操作がかなり多いです。** 実用ツールではなく実験実装として扱ってください。
+
+- 本家の計測は **Google Flights の1タスクを3回試しただけ**です。README の "Evidence and limits" にも
+  `not a general reliability benchmark` と明記されています。一般的なサイトでの信頼性は未検証です。
+- **オートコンプリートを持つサイトで詰まりやすい**です。候補リストが次の入力欄を覆っていると、
+  実行側が「覆われた要素は押さない」と正しく拒否するため、モデルが候補を確定しない限り先に進めません。
+  （日本の旅行予約サイトで再現・確認済み）
+- Shadow DOM・iframe・canvas・ファイルアップロード・ポップアップタブは本家の時点で対象外です。
+- 詰まったときは「指示を追加」欄に手順のヒント（例:「候補リストから該当項目をクリックして確定してから次へ」）を
+  入れて続行できます。
+
+### セットアップ
+
+本家と同じです（下記 [Try it](#try-it) を参照）。`.env` に `TYPESAFE_API_KEY` と `TEXT_MODEL_API_KEY` の
+2つのキーが必要です。`.env` の値は**引用符や余分な空白を入れないでください**（パーサが `strip()` しないため 401 になります）。
+
+---
+
+
 Give it one goal. [TypeSafe's Jev](https://docs.typesafe.ai/introduction) picks an operation and an element. A small LLM writes text only when the operation is `TYPE_TEXT`.
 
 **Zürich → London on Google Flights in 7.1 seconds.** One natural-language goal, actual text generation, and loading waits included.
