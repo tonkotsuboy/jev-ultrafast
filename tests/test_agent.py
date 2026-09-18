@@ -8,7 +8,7 @@ from unittest.mock import Mock
 import pytest
 
 from jev_ultrafast import agent as loop
-from jev_ultrafast import model
+from jev_ultrafast import demo, model
 from jev_ultrafast.browser import StalePage, browser_operation, fingerprint
 
 
@@ -168,12 +168,15 @@ def runner():
         "page": p,
         "decision": decision(),
         "goal": "Find a book",
+        "plan": ["Find a book"],
+        "plan_index": 0,
         "history": [],
         "decisions": [],
         "status": "predicted",
         "started_at": time.perf_counter(),
         "record": False,
         "text_calls": [],
+        "stalled": 0,
     }
     return a
 
@@ -318,3 +321,60 @@ def test_navigation_during_prediction_reobserves_without_action(runner):
     assert runner.state["status"] == "ready"
     assert runner.state["decision"] is None
     runner.state["browser"].act.assert_not_called()
+
+
+@pytest.mark.parametrize("url", ["file:///etc/passwd", "javascript:alert(1)", "ftp://example.test/", "example.test"])
+def test_custom_start_url_rejects_non_http(url):
+    with pytest.raises(ValueError):
+        demo.start_url("flights", url)
+
+
+def test_custom_start_url_accepts_http_and_falls_back_to_presets():
+    assert demo.start_url("flights", "https://example.test/search") == "https://example.test/search"
+    assert demo.start_url("flights", "") == demo.FLIGHTS_URL
+    assert demo.start_url("research", "").endswith("fixture.html?scenario=research")
+
+
+def test_stalled_decisions_stop_the_loop_but_keep_the_run_usable(runner, monkeypatch):
+    """A choice that never reaches the page hands control back; it does not block the run."""
+    monkeypatch.setattr(loop, "choose", Mock(return_value=decision()))
+    runner.state["browser"].fresh.return_value = False  # the choice is made, then refused at execution
+    for _ in range(loop.STALL_LIMIT):
+        runner.command("tick")
+    assert runner.state["stalled"] == loop.STALL_LIMIT
+    with pytest.raises(ValueError, match="No action executed"):
+        runner.command("predict")
+    assert runner.state["status"] == "ready"  # still steppable by hand
+    assert runner.state["stalled"] == 0  # the next manual attempt gets a fresh budget
+
+
+def test_executed_action_clears_the_stall_counter(runner, monkeypatch):
+    monkeypatch.setattr(loop, "field_text", Mock(return_value=("Zurich", {"model": "m", "latency_ms": 1})))
+    runner.state["stalled"] = 9
+    runner.command("act", {"fingerprint": runner.state["page"]["fingerprint"]})
+    assert runner.state["stalled"] == 0
+
+
+def test_added_instruction_continues_the_same_run(runner):
+    """A follow-up instruction resumes where the run stopped: same browser, same trace."""
+    runner.state.update(status="blocked", stalled=12)
+    runner.state["history"].append({"step": 1, "action": "typed"})
+    runner.command("goal", {"goal": "Click the airport suggestion first"})
+    assert runner.state["status"] == "ready"
+    assert runner.state["stalled"] == 0
+    assert runner.state["plan"] == ["Find a book", "Click the airport suggestion first"]
+    assert runner.state["goal"] == "Find a book\nClick the airport suggestion first"
+    assert runner.state["plan_index"] == 0  # nothing is completed; both instructions still apply
+    runner.command("goal", {"goal": "Then open the cheapest result"})
+    assert runner.state["goal"].splitlines() == [
+        "Find a book",
+        "Click the airport suggestion first",
+        "Then open the cheapest result",
+    ]
+    assert len(runner.state["history"]) == 1
+    runner.state["browser"].close.assert_not_called()
+
+
+def test_empty_instruction_is_rejected(runner):
+    with pytest.raises(ValueError, match="Supply a task"):
+        runner.command("goal", {"goal": "   "})

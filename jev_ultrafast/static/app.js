@@ -3,6 +3,11 @@ const token = document.querySelector('meta[name="demo-token"]').content;
 let state = null,
   busy = false,
   automatic = false;
+const urls = {
+  flights: "https://www.google.com/travel/flights?hl=en",
+  travel: "",
+  research: "",
+};
 const goals = {
   flights: 'Find one-way flights from Zurich to London on September 20, 2026, for one adult in economy. Stop when matching flight options are visible. Do not select or book a flight.',
   travel: 'Find a Design stay in Lisbon with Free cancellation and open Casa Flora.',
@@ -25,7 +30,7 @@ async function call(name, body = {}) {
     body: JSON.stringify(body),
   });
   const data = await response.json();
-  if (!response.ok) throw Error(data.error || "Request failed");
+  if (!response.ok) throw Error(data.error || "リクエストに失敗しました");
   state = data;
   render();
   return data;
@@ -33,8 +38,13 @@ async function call(name, body = {}) {
 function controls() {
   const live = state?.page && !["done", "blocked"].includes(state.status);
   $("start").disabled = busy;
+  $("start-step").disabled = busy;
   $("scenario").disabled = busy;
   $("goal").disabled = busy;
+  $("start-url").disabled = busy;
+  $("refocus").disabled = busy || !state?.page || !$("followup").value.trim();
+  $("followup").disabled = busy;
+  $("followup-row").hidden = !state?.page;
   $("choose").disabled = busy || !live;
   $("execute").disabled = busy || !state?.decision || !live;
   $("auto").disabled = busy || !live;
@@ -60,7 +70,7 @@ async function perform(fn, label) {
     }
     $("error").textContent = error.message;
     $("error").hidden = false;
-    $("status").textContent = "Paused · needs attention";
+    $("status").textContent = "一時停止 · 確認が必要です";
   } finally {
     busy = false;
     controls();
@@ -68,23 +78,26 @@ async function perform(fn, label) {
 }
 function render() {
   if (!state) return;
-  $("helper").textContent = `Text helper · ${state.text_model}`;
+  $("helper").textContent = `テキスト補助 · ${state.text_model}`;
   $("plan").innerHTML = (state.plan || [])
     .map(
       (goal, i) =>
-        `<div class="plan-step ${i === state.plan_index ? "current" : ""}"><span>${i < state.plan_index ? "✓" : i + 1}</span>${escape(goal)}</div>`,
+        // plan_index counts completed goals: everything at or past it is still in force, so highlight them all.
+        `<div class="plan-step ${i >= state.plan_index ? "current" : ""}"><span>${i < state.plan_index ? "✓" : i + 1}</span>${escape(goal)}</div>`,
     )
     .join("");
+  const added = (state.plan || []).length - 1;
+  $("followup-label").textContent = added > 0 ? `指示を追加（${added}件を右の依頼一覧に反映済み）` : "指示を追加";
   const page = state.page,
     d =
       state.decision ||
       (state.status === "done" ? state.decisions?.at(-1) : null);
   const labels = {
-    idle: "Ready to explore",
-    ready: "Page observed · ready for a decision",
-    predicted: "Choice ready · inspect or execute",
-    done: "Jev reports complete · inspect the page",
-    blocked: "Stopped · no supported next action",
+    idle: "準備完了",
+    ready: "ページを観測 · 判断待ち",
+    predicted: "選択完了 · 確認するか実行してください",
+    done: "Jev が完了と判断 · ページを確認してください",
+    blocked: "停止 · 実行できる次の操作がありません",
   };
   $("status").textContent = labels[state.status] || state.status;
   if (!page) {
@@ -96,15 +109,15 @@ function render() {
   $("screenshot").src = `data:image/jpeg;base64,${page.screenshot}`;
   $("url").textContent = page.url;
   $("page-title").textContent = page.title;
-  $("action-count").textContent = `${state.elements.length} elements`;
+  $("action-count").textContent = `要素 ${state.elements.length} 件`;
   const chosen = page.actions.find((a) => a.id === d?.choice);
   $("choice-title").textContent = d
     ? chosen?.label || d.choice
-    : "Choose an action";
+    : "アクションは未選択";
   $("latency").textContent = d ? `${d.latency_ms} ms` : "—";
   $("confidence").textContent = d?.target_confidence != null ? percent(d.target_confidence) : "—";
   $("completion").textContent = d ? d.operation : "—";
-  $("ranking-note").textContent = d ? "Ranked by Jev" : "Unranked";
+  $("ranking-note").textContent = d ? "Jev による順位付け" : "順位なし";
   const op = Object.entries(d?.operation_probabilities || {}).sort((a,b)=>b[1]-a[1]);
   $("operation-choices").innerHTML = op.map(([name,p]) =>
     `<span class="operation-choice ${name === d.operation ? 'best' : ''}">${escape(name)} <b>${percent(p)}</b></span>`).join('');
@@ -128,11 +141,11 @@ function render() {
     ? state.history
         .map(
           (h) =>
-            `<div class="trace-row"><span class="number">${String(h.step).padStart(2, "0")}</span><div>${escape(h.action)}${h.text ? ` <b>“${escape(h.text)}”</b><small>${escape(h.text_helper)}</small>` : ""}</div><span class="time">${h.latency_ms} ms · ${percent(h.probability)}</span><span class="effect">${h.page_changed ? "Page changed" : "No change observed"}</span></div>`,
+            `<div class="trace-row"><span class="number">${String(h.step).padStart(2, "0")}</span><div>${escape(h.action)}${h.text ? ` <b>“${escape(h.text)}”</b><small>${escape(h.text_helper)}</small>` : ""}</div><span class="time">${h.latency_ms} ms · ${percent(h.probability)}</span><span class="effect">${h.page_changed ? "ページが変化" : "変化なし"}</span></div>`,
         )
         .join("")
-    : '<p class="muted">Each executed action leaves an observed result.</p>';
-  $("step-count").textContent = `${state.history.length} actions · ${(state.elapsed_ms / 1000).toFixed(2)} s`;
+    : '<p class="muted">実行された各アクションは、観測された結果を残します。</p>';
+  $("step-count").textContent = `${state.history.length} アクション · ${(state.elapsed_ms / 1000).toFixed(2)} 秒`;
   $("model-state").textContent = JSON.stringify(
     d?.request || {
       goal: state.goal,
@@ -145,49 +158,65 @@ function render() {
   );
   controls();
 }
+const startBody = () => ({
+  scenario: $("scenario").value,
+  goal: $("goal").value,
+  url: $("start-url").value.trim(),
+});
+async function runAutomatically() {
+  automatic = true;
+  controls();
+  for (let i = 0; i < state.max_steps * 2 && automatic; i++) {
+    $("status").textContent = "実行中…";
+    if ($("pace").checked) {
+      await call("predict");
+      await new Promise((resolve) => setTimeout(resolve, 450));
+      if (!automatic) break;
+      await call("act", { fingerprint: state.page.fingerprint });
+    } else {
+      await call("tick");
+    }
+    if (["done", "blocked"].includes(state.status)) break;
+  }
+  automatic = false;
+}
 $("task-form").addEventListener("submit", (event) => {
   event.preventDefault();
   automatic = false;
-  perform(
-    () =>
-      call("reset", { scenario: $("scenario").value, goal: $("goal").value }),
-    "Opening a fresh browser…",
-  );
+  perform(async () => {
+    await call("reset", startBody());
+    await runAutomatically();
+  }, "新しいブラウザを開いています…");
+});
+$("start-step").addEventListener("click", () => {
+  automatic = false;
+  perform(() => call("reset", startBody()), "新しいブラウザを開いています…");
 });
 $("scenario").addEventListener("change", () => {
   $("goal").value = goals[$("scenario").value];
+  $("start-url").value = urls[$("scenario").value];
 });
+$("refocus").addEventListener("click", () =>
+  perform(async () => {
+    await call("goal", { goal: $("followup").value });
+    $("followup").value = "";  // the plan above now carries it; the field is ready for the next one
+    controls();
+  }, "指示を追加しています…"),
+);
+$("followup").addEventListener("input", controls);
 $("choose").addEventListener("click", () =>
-  perform(() => call("predict"), "Jev is comparing the actions…"),
+  perform(() => call("predict"), "Jev がアクションを比較しています…"),
 );
 $("execute").addEventListener("click", () =>
   perform(
     () => call("act", { fingerprint: state.page.fingerprint }),
-    "Executing the choice…",
+    "選択を実行しています…",
   ),
 );
-$("auto").addEventListener("click", () =>
-  perform(async () => {
-    automatic = true;
-    controls();
-    for (let i = 0; i < state.max_steps * 2 && automatic; i++) {
-      $("status").textContent = "Running…";
-      if ($("pace").checked) {
-        await call("predict");
-        await new Promise(resolve => setTimeout(resolve, 450));
-        if (!automatic) break;
-        await call("act", {fingerprint: state.page.fingerprint});
-      } else {
-        await call("tick");
-      }
-      if (["done", "blocked"].includes(state.status)) break;
-    }
-    automatic = false;
-  }, "Running the browser…"),
-);
+$("auto").addEventListener("click", () => perform(runAutomatically, "ブラウザを実行中…"));
 $("stop").addEventListener("click", () => {
   automatic = false;
-  $("status").textContent = "Pausing after the current request…";
+  $("status").textContent = "現在のリクエストの完了後に停止します…";
   controls();
 });
 $("overlays").addEventListener("change", () => {
@@ -240,5 +269,5 @@ fetch("/api/state")
     render();
   })
   .catch(() => {
-    $("status").textContent = "Cannot reach local demo server";
+    $("status").textContent = "ローカルデモサーバーに接続できません";
   });

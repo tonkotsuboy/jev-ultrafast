@@ -707,7 +707,8 @@ textarea:focus-visible {
 .plan-step {
   display: flex;
   gap: 9px;
-  font-size: 10px;
+  font-size: 12px;
+  line-height: 1.5;
   color: #969d8e;
 }
 .plan-step span {
@@ -718,6 +719,10 @@ textarea:focus-visible {
 }
 .plan-step.current {
   color: #3c744f;
+}
+.plan-step.current + .plan-step.current {
+  padding-top: 5px;
+  border-top: 1px solid var(--line);
 }
 .plan-step.current span {
   color: #dc6b36;
@@ -735,3 +740,41 @@ textarea:focus-visible {
 }
 
 .operation-choices{display:flex;flex-wrap:wrap;gap:6px;margin:14px 0}.operation-choice{font-size:10px;padding:5px 7px;border:1px solid #dbe2d4;border-radius:5px;color:#687260}.operation-choice.best{color:#185c3b;background:#eef6e5;border-color:#88ac79}
+
+.url-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding-bottom: 14px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+  color: #77776e;
+}
+.url-row label {
+  white-space: nowrap;
+}
+#start-url {
+  font-size: 13px;
+  color: #64675e;
+}
+@media (max-width: 760px) {
+  .url-row {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .url-row label,
+  #start-url {
+    font-size: 14px;
+  }
+}
+
+#followup-row {
+  padding-top: 16px;
+  margin-top: 16px;
+  border-top: 1px solid var(--line);
+}
+#followup {
+  font-size: 14px;
+}

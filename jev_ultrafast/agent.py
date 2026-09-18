@@ -8,6 +8,9 @@ from .browser import Browser, StalePage
 from .model import action_space, choose, field_context, field_text
 from .questions import MAX_STEPS
 
+# Six verified Flights runs spent 4-13 decisions without executing. Above that the choice never reaches the page.
+STALL_LIMIT = 15
+
 
 class Agent:
     def __init__(self, url, goals, *, record_dir=None, screenshots=False):
@@ -37,6 +40,7 @@ class Agent:
             text_calls=[],
             elapsed_ms=0,
             started_at=None,
+            stalled=0,
             record=bool(self.record_dir),
         )
         if self.record_dir:
@@ -72,6 +76,14 @@ class Agent:
             state["decision"] = None
             if state["status"] in {"done", "blocked"}:
                 raise ValueError("This run has stopped. Start a fresh demo.")
+            if state["stalled"] >= STALL_LIMIT:
+                # Executed actions that change nothing already block below. This is the choice never reaching the page:
+                # recoverable by hand, so hand control back rather than blocking the run.
+                state["stalled"] = 0
+                raise ValueError(
+                    f"No action executed in {STALL_LIMIT} consecutive decisions; the page keeps changing between "
+                    "each choice and its execution. Step one action at a time, add an instruction, or start over."
+                )
             if len(state["decisions"]) >= MAX_STEPS * 2:
                 raise ValueError("Reached the demo's model-call budget")
             state["decision"] = choose(state["page"], state["goal"], state["history"])
@@ -82,6 +94,7 @@ class Agent:
                     "elapsed_ms": round((time.perf_counter() - state["started_at"]) * 1000),
                 }
             )
+            state["stalled"] += 1
             state["status"] = "predicted"
         elif name == "act":
             decision, page = state["decision"], state["page"]
@@ -116,6 +129,7 @@ class Agent:
             # Browser.act checks freshness immediately before input, including after text generation.
             state["browser"].act(action, page, text=text)
             self.pending_text = None
+            state["stalled"] = 0
             state["elapsed_ms"] = round((time.perf_counter() - state["started_at"]) * 1000)
             # Record execution before observing. A stale post-action observation must not erase the action.
             state["history"].append(
@@ -156,6 +170,19 @@ class Agent:
                 if len(repeated) == 3 and all(h["page_changed"] is False and h["kind"] != "wait" for h in repeated)
                 else "ready"
             )
+        elif name == "goal":
+            # Keep the browser, the trace and the elapsed clock. Only the instructions grow.
+            text = (body.get("goal") or "").strip()
+            if not text or len(text) > 2000:
+                raise ValueError("Supply a task")
+            if text != state["plan"][-1]:
+                state["plan"].append(text)
+            # plan_index counts completed goals, so it stays put: every instruction so far still applies.
+            state["goal"] = "\n".join(state["plan"])
+            state["decision"] = None
+            state["stalled"] = 0
+            state["status"] = "ready"
+            state["page"] = state["browser"].observe(screenshot=self.screenshots)
         else:
             raise ValueError("Unknown command")
         return self.snapshot()

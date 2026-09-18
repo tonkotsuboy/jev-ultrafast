@@ -14,6 +14,8 @@ from .questions import MAX_STEPS
 
 ROOT = Path(__file__).parent
 PORT = int(os.environ.get("TYPESAFE_DEMO_PORT", "8766"))
+FLIGHTS_URL = "https://www.google.com/travel/flights?hl=en"
+FAILED = "ローカルデモが失敗しました。自動リトライはしません。リセットして復帰してください。"
 ORIGIN = f"http://127.0.0.1:{PORT}"
 TOKEN = secrets.token_urlsafe(32)
 LOCK = threading.Lock()
@@ -41,20 +43,28 @@ def close_browser():
         AGENT = None
 
 
+def start_url(scenario, url):
+    """Any http(s) page is a valid starting point; the presets only prefill the field."""
+    if not url:
+        return FLIGHTS_URL if scenario == "flights" else f"{ORIGIN}/fixture.html?scenario={scenario}"
+    if len(url) > 2000 or urlparse(url).scheme not in {"http", "https"}:
+        raise ValueError("URLは http:// または https:// で始めてください")
+    return url
+
+
 def command(name, body):
     global AGENT
     if name == "reset":
         scenario = body.get("scenario", "flights")
         if scenario not in {"travel", "research", "flights"}:
-            raise ValueError("Unknown demo scenario")
+            raise ValueError("不明なデモシナリオです")
         goal = body.get("goal", "").strip()
         if not goal or len(goal) > 2000:
-            raise ValueError("Enter 1–2,000 characters")
+            raise ValueError("タスクは1〜2,000文字で入力してください")
+        url = start_url(scenario, body.get("url", "").strip())
         close_browser()
         AGENT = Agent(
-            "https://www.google.com/travel/flights?hl=en"
-            if scenario == "flights"
-            else f"{ORIGIN}/fixture.html?scenario={scenario}",
+            url,
             goal,
             screenshots=True,
             record_dir=Path.cwd() / "artifacts" / "frames" if body.get("record") else None,
@@ -62,7 +72,7 @@ def command(name, body):
         AGENT.state["scenario"] = scenario
     else:
         if AGENT is None:
-            raise ValueError("Start a demo first")
+            raise ValueError("先にデモを開始してください")
         AGENT.command(name, body)
     return response_state()
 
@@ -107,20 +117,20 @@ class Handler(BaseHTTPRequestHandler):
             or self.headers.get("X-Demo-Token") != TOKEN
             or self.headers.get("Origin") not in (None, ORIGIN)
         ):
-            return self.send(403, json.dumps({"error": "Local demo requests only"}))
+            return self.send(403, json.dumps({"error": "ローカルデモからのリクエストのみ受け付けます"}))
         if not LOCK.acquire(blocking=False):
-            return self.send(409, json.dumps({"error": "A browser step is already running"}))
+            return self.send(409, json.dumps({"error": "ブラウザの処理が実行中です"}))
         try:
             length = int(self.headers.get("Content-Length", "0"))
             if not 0 < length < 8192:
-                raise ValueError("Invalid request size")
+                raise ValueError("リクエストサイズが不正です")
             body = json.loads(self.rfile.read(length))
             result = command(self.path.removeprefix("/api/"), body)
             self.send(200, json.dumps(result))
         except (ValueError, RuntimeError, TimeoutError) as error:
             self.send(400, json.dumps({"error": str(error)}))
         except Exception:
-            self.send(500, json.dumps({"error": "Local demo failed; no automatic retry. Reset to recover."}))
+            self.send(500, json.dumps({"error": FAILED}))
         finally:
             LOCK.release()
 
